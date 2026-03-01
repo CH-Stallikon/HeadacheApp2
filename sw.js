@@ -1,4 +1,4 @@
-const CACHE_NAME="headachetrack-v2";
+const CACHE_NAME="headachetrack-v3";
 const ASSETS=["/","/index.html","/manifest.json","/icon.png"];
 
 self.addEventListener("install",e=>{ e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(ASSETS))) });
