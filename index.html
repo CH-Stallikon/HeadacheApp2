@@ -34,18 +34,17 @@
         .tab-item { flex: 1; text-align: center; padding: 15px; font-size: 0.9rem; opacity: 0.4; font-weight: bold; cursor: pointer; }
         .tab-item.active { opacity: 1; color: var(--accent); }
         .page { display: none; } .page.active { display: block; }
-        
-        /* PDF specific styling - only visible during export */
-        #pdf-export-container { width: 800px; padding: 40px; background: white; color: black; display: none; }
-        #pdf-export-container table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        #pdf-export-container th, #pdf-export-container td { border: 1px solid #ddd; padding: 10px; text-align: left; color: black; }
+        #pdf-export-container { width: 800px; padding: 40px; background: white; color: black; display: none; position: fixed; left: -3000px; }
+        #pdfTable { width: 100%; border-collapse: collapse; color: black; }
+        #pdfTable th, #pdfTable td { border: 1px solid #ddd; padding: 8px; text-align: left; }
     </style>
 </head>
 <body>
 
 <div class="container">
+    <!-- LOG PAGE -->
     <div id="logPage" class="page active">
-        <h1 id="logTitle">Log Headache</h1>
+        <h1>Log Headache</h1>
         <div class="card">
             <h2>Type</h2>
             <div class="grid" id="typeGrid">
@@ -70,29 +69,31 @@
                 <button onclick="toggleMed('Eletriptan', this)">Eletriptan</button>
                 <button onclick="toggleMed('None', this)">None</button>
             </div>
-            <button id="mainSaveBtn" class="btn-main" onclick="saveLog()">Save Status</button>
+            <button class="btn-main" onclick="saveLog()">Save Status</button>
         </div>
     </div>
 
+    <!-- HISTORY PAGE -->
     <div id="historyPage" class="page">
         <h1>History</h1>
         <div class="card" id="historyList">Loading...</div>
     </div>
 
+    <!-- REPORT PAGE -->
     <div id="reportPage" class="page">
         <h1>Analysis</h1>
-        <div class="card"><h2>Daily Severity</h2><canvas id="uiTimelineChart"></canvas></div>
-        <div class="card"><h2>Monthly Totals</h2><canvas id="uiMonthlyChart"></canvas></div>
+        <div class="card"><h2>Severity Timeline</h2><canvas id="uiTimelineChart"></canvas></div>
+        <div class="card"><h2>Monthly Summary</h2><canvas id="uiMonthlyChart"></canvas></div>
         <button id="pdfBtn" class="btn-main" onclick="generatePDF()">Export PDF Report</button>
     </div>
 </div>
 
-<!-- CONTAINER FOR PDF (Visible only during export) -->
+<!-- HIDDEN PDF CONTENT -->
 <div id="pdf-export-container">
     <h1 style="color:black">Headache Clinical Report</h1>
-    <div id="pdf-charts"></div>
+    <div id="pdf-space"></div>
     <table id="pdfTable">
-        <thead><tr><th>DATE</th><th>TYPE</th><th>SEV</th><th>MEDICATION</th></tr></thead>
+        <thead><tr><th>DATE</th><th>TYPE</th><th>SEV</th><th>MEDS</th></tr></thead>
         <tbody id="pdfTableBody"></tbody>
     </table>
 </div>
@@ -104,78 +105,98 @@
 </nav>
 
 <script>
-    // 1. PWA Service Worker Registration
+    // Register Service Worker for Offline
     if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('sw.js').then(() => console.log("PWA Active"));
+        navigator.serviceWorker.register('sw.js').catch(() => {});
     }
 
-    const db = new Dexie("HeadacheTrackerDB_V6");
+    // DB Setup - Using a fresh version to ensure no conflicts
+    const db = new Dexie("HeadacheTrackerDB_V7");
     db.version(1).stores({ logs: '++id, date, type, sev, med' });
 
-    let entry = { id: null, type: '', sev: 0, med: [] };
+    let currentEntry = { type: '', sev: 0, med: [] };
 
     function setVal(f, v, el) {
-        entry[f] = v;
+        currentEntry[f] = v;
         el.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('active'));
         el.classList.add('active');
     }
 
     function toggleMed(v, el) {
         if (v === 'None') {
-            entry.med = ['None'];
+            currentEntry.med = ['None'];
             el.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('active'));
             el.classList.add('active');
         } else {
-            entry.med = entry.med.filter(m => m !== 'None');
+            currentEntry.med = currentEntry.med.filter(m => m !== 'None');
             document.querySelectorAll('#medGrid button').forEach(b => { if(b.innerText==='None') b.classList.remove('active'); });
-            if (entry.med.includes(v)) { entry.med = entry.med.filter(m => m !== v); el.classList.remove('active'); }
-            else { entry.med.push(v); el.classList.add('active'); }
+            if (currentEntry.med.includes(v)) {
+                currentEntry.med = currentEntry.med.filter(m => m !== v);
+                el.classList.remove('active');
+            } else {
+                currentEntry.med.push(v);
+                el.classList.add('active');
+            }
         }
     }
 
     async function saveLog() {
-        if (!entry.type || !entry.sev) return alert("Select Type and Severity");
-        await db.logs.add({ ...entry, date: new Date() });
-        alert("Saved!");
-        location.reload();
+        if (!currentEntry.type || !currentEntry.sev) return alert("Please select Type and Severity");
+        
+        try {
+            await db.logs.add({
+                type: currentEntry.type,
+                sev: currentEntry.sev,
+                med: currentEntry.med,
+                date: new Date()
+            });
+            alert("Entry Saved!");
+            resetUI();
+            nav('historyPage', document.querySelectorAll('.tab-item')[1]);
+        } catch (e) {
+            alert("Error saving: " + e);
+        }
     }
 
-    function nav(id, el) {
+    function resetUI() {
+        currentEntry = { type: '', sev: 0, med: [] };
+        document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    }
+
+    function nav(pageId, el) {
         document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
         document.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
-        document.getElementById(id).classList.add('active');
+        document.getElementById(pageId).classList.add('active');
         el.classList.add('active');
-        if (id === 'historyPage') renderHistory();
-        if (id === 'reportPage') renderAllCharts();
+        if (pageId === 'historyPage') renderHistory();
+        if (pageId === 'reportPage') renderCharts();
     }
 
     async function renderHistory() {
         const logs = await db.logs.orderBy('date').reverse().toArray();
-        const container = document.getElementById('historyList');
-        container.innerHTML = logs.map(l => `
+        const list = document.getElementById('historyList');
+        if (logs.length === 0) { list.innerHTML = "No entries yet."; return; }
+        list.innerHTML = logs.map(l => `
             <div class="history-item">
                 <div><strong>${new Date(l.date).toLocaleDateString()}</strong> - ${l.type}</div>
-                <div>S:${l.sev} | <button onclick="deleteEntry(${l.id})" style="color:red; background:none; font-weight:bold">Del</button></div>
+                <div>S:${l.sev} <button onclick="deleteItem(${l.id})" style="color:red; background:none; font-weight:bold; margin-left:10px">✕</button></div>
             </div>
         `).join('');
     }
 
-    async function deleteEntry(id) {
+    async function deleteItem(id) {
         if (confirm("Delete?")) { await db.logs.delete(id); renderHistory(); }
     }
 
     let charts = {};
-    async function renderAllCharts() {
+    async function renderCharts() {
         const logs = await db.logs.orderBy('date').toArray();
-        drawTimeline(logs, 'uiTimelineChart');
-        drawMonthlySummary(logs, 'uiMonthlyChart');
-    }
-
-    function drawTimeline(logs, canvasId) {
-        const ctx = document.getElementById(canvasId).getContext('2d');
-        if (charts[canvasId]) charts[canvasId].destroy();
         const labels = [...new Set(logs.map(l => new Date(l.date).toLocaleDateString()))];
-        charts[canvasId] = new Chart(ctx, {
+        
+        // Severity Chart
+        const ctx1 = document.getElementById('uiTimelineChart').getContext('2d');
+        if (charts.ui1) charts.ui1.destroy();
+        charts.ui1 = new Chart(ctx1, {
             type: 'line',
             data: {
                 labels: labels,
@@ -186,64 +207,56 @@
             },
             options: { scales: { y: { min: 0, max: 5, ticks: { stepSize: 1 } } } }
         });
-    }
 
-    function drawMonthlySummary(logs, canvasId) {
+        // Monthly Summary
         const summary = {};
         logs.forEach(l => {
             const m = new Date(l.date).toLocaleString('default', { month: 'short', year: 'numeric' });
             if (!summary[m]) summary[m] = { Migraine: 0, Tension: 0 };
             summary[m][l.type]++;
         });
-        const labels = Object.keys(summary);
-        const ctx = document.getElementById(canvasId).getContext('2d');
-        if (charts[canvasId]) charts[canvasId].destroy();
-        charts[canvasId] = new Chart(ctx, {
+        const mLabels = Object.keys(summary);
+        const ctx2 = document.getElementById('uiMonthlyChart').getContext('2d');
+        if (charts.ui2) charts.ui2.destroy();
+        charts.ui2 = new Chart(ctx2, {
             type: 'bar',
             data: {
-                labels: labels,
+                labels: mLabels,
                 datasets: [
-                    { label: 'Migraines', data: labels.map(l => summary[l].Migraine), backgroundColor: '#0984e3' },
-                    { label: 'Tension', data: labels.map(l => summary[l].Tension), backgroundColor: '#e67e22' }
+                    { label: 'Migraine', data: mLabels.map(l => summary[l].Migraine), backgroundColor: '#0984e3' },
+                    { label: 'Tension', data: mLabels.map(l => summary[l].Tension), backgroundColor: '#e67e22' }
                 ]
-            },
-            options: { scales: { y: { ticks: { stepSize: 1 } } } }
+            }
         });
     }
 
     async function generatePDF() {
         const btn = document.getElementById('pdfBtn');
-        btn.innerText = "Processing...";
-        
+        btn.innerText = "Generating...";
         const logs = await db.logs.orderBy('date').reverse().toArray();
+        
         document.getElementById('pdfTableBody').innerHTML = logs.map(l => `
             <tr><td>${new Date(l.date).toLocaleDateString()}</td><td>${l.type}</td><td>${l.sev}</td><td>${l.med.join(', ')}</td></tr>
         `).join('');
 
-        // Use Chart.js toImage() to get clean images instead of screen captures
-        const timelineImg = document.getElementById('uiTimelineChart').toDataURL('image/png');
-        const monthlyImg = document.getElementById('uiMonthlyChart').toDataURL('image/png');
+        const timeImg = document.getElementById('uiTimelineChart').toDataURL('image/png');
+        const monthImg = document.getElementById('uiMonthlyChart').toDataURL('image/png');
 
-        const pdfContainer = document.getElementById('pdf-export-container');
-        pdfContainer.style.display = 'block'; // Momentarily show for capture
-        
-        const canvas = await html2canvas(pdfContainer, { scale: 2 });
         const { jsPDF } = window.jspdf;
-        const doc = new jsPDF('p', 'mm', 'a4');
+        const doc = new jsPDF();
         
-        // Add Graphs Manually to ensure they aren't blank
-        doc.text("Headache Clinical Report", 15, 20);
-        doc.addImage(timelineImg, 'PNG', 15, 30, 180, 80);
-        doc.addImage(monthlyImg, 'PNG', 15, 120, 180, 80);
+        doc.setFontSize(18);
+        doc.text("Headache Clinical Report", 20, 20);
+        doc.addImage(timeImg, 'PNG', 15, 30, 180, 70);
+        doc.addImage(monthImg, 'PNG', 15, 110, 180, 70);
         
-        // Add Table using a new page or below graphs
         doc.addPage();
-        doc.text("Detailed History Table", 15, 20);
-        const tableCanvas = await html2canvas(document.getElementById('pdfTable'), { scale: 2 });
-        doc.addImage(tableCanvas.toDataURL('image/png'), 'PNG', 15, 30, 180, 0);
-
+        doc.text("Full History Data", 20, 20);
+        const tableArea = document.getElementById('pdfTable');
+        const canvas = await html2canvas(tableArea);
+        doc.addImage(canvas.toDataURL('image/png'), 'PNG', 15, 30, 180, 0);
+        
         doc.save("Headache_Report.pdf");
-        pdfContainer.style.display = 'none';
         btn.innerText = "Export PDF Report";
     }
 </script>
